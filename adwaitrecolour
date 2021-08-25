@@ -1,0 +1,126 @@
+#!/bin/bash
+
+read -p "Welcome to the Adwaita Recolouriser! This requires the following commands to work:
+inkscape
+optipng
+sassc
+
+Press ENTER to begin."
+
+clear
+read -p "Which GTK version do you want to recolour for? [(3)/4] " gtkver
+
+if [ "$gtkver" != "3" ] && [ "$gtkver" != "4" ]; then
+    gtkver=3
+fi
+
+
+if [ -d gtk ]; then
+    i=1
+    while true; do
+        if [ ! -d gtk-old"$i" ]; then
+            break
+        fi
+        i=$(($i+1))
+    done
+    mv gtk gtk-old"$i"
+    echo "W: Existing gtk directory was moved to gtk-old$i."
+fi
+
+read -p 'Select the branch of https://gitlab.gnome.org/GNOME/gtk that you would like to get Adwaita from (default is gtk-3-24): ' gtkbranch
+
+if [ -z "$gtkbranch" ]; then gtkbranch="gtk-3-24"; fi
+
+git clone https://gitlab.gnome.org/GNOME/gtk.git -b $gtkbranch --depth=1
+
+if [ ! $? -eq 0 ]; then
+    echo "Either this branch doesn't exist or git failed. Exiting."
+    exit 1
+fi
+
+cd gtk/gtk/theme/Adwaita
+
+xdg-open _colors.scss >/dev/null 2>&1 &
+read -p 'The colors file should now open. Make any colour changes you want and press ENTER to continue.'
+
+xdg-open assets.svg >/dev/null 2>&1 &
+read -p 'The assets.svg file should now open. Make sure, for consistency, that the colour is changed here too. Press ENTER to continue.'
+
+if [ -f /usr/bin/inkscape ]; then
+    sed -i 's%flatpak run org.inkscape.Inkscape%/usr/bin/inkscape%g' render-assets.sh
+fi
+
+mv assets assets-old
+mkdir assets
+bash ./render-assets.sh
+
+if [ ! $? -eq 0 ]; then
+    echo "Rendering assets failed. This likely means you don't have optipng or inkscape installed. Deleting gtk folder and aborting."
+    cd ../../../..
+    rm -rf gtk
+    exit 1
+fi
+
+for file in assets-old/*; do
+    if [ ! -f "$(echo $file | sed 's%assets-old%assets%g')" ]; then
+        cp -f "$file" "$(echo $file | sed 's%assets-old%assets%g')"
+    fi
+done
+rm -rf assets-old
+
+echo "Creating your recoloured Adwaita..."
+
+if [ "$gtkver" = 3 ]; then
+    sassc $SASSC_OPT gtk-contained.scss gtk-contained.css
+else
+    sassc $SASSC_OPT Adwaita.scss gtk.css
+fi
+if [ ! $? -eq 0 ]; then
+    echo "Rendering the theme failed. This likely means you don't have sassc installed. Deleting gtk folder and aborting."
+    cd ../../../..
+    rm -rf gtk
+    exit 1
+fi
+
+if [ "$gtkver" = 3 ]; then
+    sassc $SASSC_OPT gtk-contained-dark.scss gtk-contained-dark.css
+else
+    sassc $SASSC_OPT Adwaita-dark.scss gtk-dark.css
+fi
+if [ ! $? -eq 0 ]; then
+    echo "Rendering the theme failed. This likely means you don't have sassc installed. Deleting gtk folder and aborting."
+    cd ../../../..
+    rm -rf gtk
+    exit 1
+fi
+
+if [ "$gtkver" = 3 ]; then
+    echo "Making final changes to css files..."
+    echo '@import url("gtk-contained.css");' > gtk.css #if this isn't done, the system just loads fallback Adwaita when you apply your theme
+    echo '@import url("gtk-contained-dark.css");' > gtk-dark.css
+fi
+
+clear
+echo "Theme is now being constructed..."
+
+mkdir ~/.themes
+rm -rf ~/.themes/AdwaitaRecolour/gtk-$gtkver.0
+mkdir ~/.themes/AdwaitaRecolour
+mkdir ~/.themes/AdwaitaRecolour/gtk-$gtkver.0
+
+cp -Rf assets ~/.themes/AdwaitaRecolour/gtk-$gtkver.0/assets
+cp -f gtk.css ~/.themes/AdwaitaRecolour/gtk-$gtkver.0/gtk.css
+cp -f gtk-contained.css ~/.themes/AdwaitaRecolour/gtk-$gtkver.0/gtk-contained.css
+cp -f gtk-dark.css ~/.themes/AdwaitaRecolour/gtk-$gtkver.0/gtk-dark.css
+cp -f gtk-contained-dark.css ~/.themes/AdwaitaRecolour/gtk-$gtkver.0/gtk-contained-dark.css
+
+echo "
+Theme has been constructed at ~/.themes/AdwaitaRecolour, now applying your recolour..."
+
+gsettings set org.gnome.desktop.interface gtk-theme Default
+sleep 2
+gsettings set org.gnome.desktop.interface gtk-theme AdwaitaRecolour
+
+clear
+echo "All done, check your new theme out!"
+exit 0
